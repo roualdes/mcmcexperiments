@@ -1,0 +1,12 @@
+print: True
+digits: 4
+iterations: 10_000
+warmup: 500
+replications: 1
+seed: null
+stepsize: 0.99
+
+bs_path: ~/bridgestan
+
+model_path: stan
+model_name: normal
