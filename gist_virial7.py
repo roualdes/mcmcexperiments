@@ -3,27 +3,32 @@ import numpy as np
 import hmc
 import traceback
 
-class GISTV5(hmc.HMCBase):
+class GISTV7(hmc.HMCBase):
     """Virial GIST
 
     Propose from foward trajectory and balance with backward
     trajectory.  switch_limit can be greater than 1. Proposals are
     biased towards the end of the trajectory in segments consisting of
-    segment_length steps.  Biasing analogous to Stan.
+    segment_length steps.  Biasing analogous to Stan.  Trialing new biasing.
+
+    Works, but isn't what I want.  Effectively the same as multinoulli
+    sampling the entire trajectory; see gist_virial4.py
+
+    I'm finding gist_virial{4, 7}.py to be better than gist_uturn2.py,
+    because it effectively eliminates the sub-uturn rejections.
 
     """
     def __init__(self, model, stepsize, theta = None, seed = None,
                  switch_limit = 1, segment_length = 2, **kwargs):
 
         super().__init__(model, stepsize, seed = seed)
-        self.sampler_name = f"GIST-V5_{switch_limit}"
+        self.sampler_name = f"GIST-V7_{switch_limit}"
 
         if theta is not None:
             self.theta = theta
 
         self.segment_length = segment_length
         self.switch_limit = switch_limit
-
         self.steps = 0
         self.prop_accepted = 0.0
         self.draws = 0
@@ -43,7 +48,6 @@ class GISTV5(hmc.HMCBase):
             return np.inf
 
     def trajectory(self, theta, rho, lsw = 0.0, switch_discount = 0):
-        theta0 = theta
         theta_star = theta
         rho_star = rho
         theta_prop = theta
@@ -51,13 +55,17 @@ class GISTV5(hmc.HMCBase):
         v = self.virial(theta, rho)
         sv = np.sign(v)
         H_0 = self.log_joint(theta, rho)
-        switches = 0
         steps = 0
-        lsw_segment = -np.inf
+        lsw_star = -np.inf
+        lsw_new = -np.inf
+        lsw_old = 0.0
         lsw_prop = -np.inf
+        switches = 0
         switches_passed = 0
-        end_segment = False
+        switches_passed_star = 0
         proposal_steps = 0
+        proposal_steps_star = 0
+        end_segment = False
         while True:
             steps += 1
             end_segment = steps % self.segment_length == 0
@@ -76,30 +84,38 @@ class GISTV5(hmc.HMCBase):
                 switches += 1
                 sv = np.sign(v)
 
-            # sample new state
-            lsw_segment = np.logaddexp(lsw_segment, delta)
+            # track total energy
             lsw = np.logaddexp(lsw, delta)
+
+            # sample state within segment
             log_alpha = delta - lsw
             if np.log(self.rng.uniform()) < np.minimum(0.0, log_alpha):
                 theta_star = theta
                 rho_star = rho
-                switches_passed = switches
+                lsw_star = lsw
+                proposal_steps_star = steps
+                switches_passed_star = switches
 
-            # sample from last segment and start new segment
+            # sample segment and start new segment
             if end_segment:
-                log_beta = lsw - lsw_segment
+                log_beta = lsw_new - lsw_old
                 if np.log(self.rng.uniform()) < np.minimum(0.0, log_beta):
                     theta_prop = theta_star
                     rho_prop = rho_star
-                    proposal_steps = steps
-                    lsw_prop = lsw
-                lsw_segment = -np.inf
+                    proposal_steps = proposal_steps_star
+                    switches_passed = switches_passed_star
+                    lsw_prop = lsw_star
+                lsw_old = lsw_new
+                lsw_new = -np.inf
+            else:
+                lsw_new = np.logaddexp(lsw_new, delta)
 
             # if end_segment and reached switch limit, break
             if end_segment and switches >= self.switch_limit - switch_discount:
                 break
 
         self.steps += steps
+        # return theta_star, rho_star, lsw_prop, lsw, switches_passed, proposal_steps
         return theta_prop, rho_prop, lsw_prop, lsw, switches_passed, proposal_steps
 
     def draw(self):
@@ -116,7 +132,7 @@ class GISTV5(hmc.HMCBase):
             _, _, _, BW, _, _ = self.trajectory(theta, -rho,
                                                 lsw = lsw_star,
                                                 switch_discount = switches_passed)
-            BW = self.logsubexp(BW, 0.0)
+            BW = self.logsubexp(BW, 0.0) # don't double count theta0
 
             # H_star - H_0 + (H_0 - BW) - (H_star - FW)
             log_alpha = FW - BW

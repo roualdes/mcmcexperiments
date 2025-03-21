@@ -3,29 +3,21 @@ import numpy as np
 import hmc
 import traceback
 
-class GISTV4(hmc.HMCBase):
-    """Virial GIST
+class GISTU2(hmc.HMCBase):
+    """GIST UTURN
 
-    Propose from foward trajectory and balance with backward
-    trajectory.  switch_limit can be greater than 1. Online
-    Multinoulli sampling during foward trajectory.
+    Online Multinoulli sampling during forward trajectory.
 
     """
-    def __init__(self, model, stepsize,
-                 theta = None, seed = None,
-                 switch_limit = 1, **kwargs):
+    def __init__(self, model, stepsize, theta = None, seed = None, **kwargs):
 
         super().__init__(model, stepsize, seed = seed)
-        self.sampler_name = f"GIST-V4_{switch_limit}"
+        self.sampler_name = "GIST-UTURN-2"
 
         if theta is not None:
             self.theta = theta
 
-        self.switch_limit = switch_limit
-        self.switches_passed = 0
-
         self.steps = 0
-        self.proposal_steps = 0
         self.forward_steps = []
         self.mean_proposal_steps = 0.0
 
@@ -50,35 +42,26 @@ class GISTV4(hmc.HMCBase):
         d = accepted - self.acceptance_probability
         self.acceptance_probability += d / self.draws
 
-    def virial(self, theta, rho):
-        return 2 * rho.dot(theta)
 
-    def logsubexp(self, a, b):
-        if a > b:
-            return a + np.log1p(-np.exp(b - a))
-        elif a < b:
-            return b + np.log1p(-np.exp(a - b))
-        else:
-            return np.inf
-
-    def trajectory(self, theta, rho, lsw = 0.0):
+    def trajectory(self, theta, rho):
+        theta0 = theta
         theta_prop = theta
-
-        v = self.virial(theta, rho)
-        sv = np.sign(v)
-        H0 = self.log_joint(theta, rho)
+        rho_prop = rho
 
         steps = 0
         steps_prop = 0
 
-        lsw_prop = -np.inf
+        uturn = False
+        last_distance = 0
 
-        switches = 0
-        switches_prop = 0
+        H0 = self.log_joint(theta, rho)
+        lsw = 0.0 # H0 - H0
+        lsw_prop = -np.inf
 
         while True:
             steps += 1
 
+            # leapfrog step
             theta, rho = self.leapfrog_step(theta, rho)
             H = self.log_joint(theta, rho)
             delta = H - H0
@@ -86,11 +69,10 @@ class GISTV4(hmc.HMCBase):
                 self.divergences += 1
                 break
 
-            # check virial sign switch
-            v = self.virial(theta, rho)
-            if sv * np.sign(v) < 0:
-                switches += 1
-                sv = np.sign(v)
+            distance = np.sum((theta - theta0) ** 2)
+            if distance <= last_distance:
+                uturn = True
+            last_distance = distance
 
             # track total energy
             lsw = np.logaddexp(lsw, delta)
@@ -101,33 +83,37 @@ class GISTV4(hmc.HMCBase):
                 theta_prop = theta
                 lsw_prop = lsw
                 steps_prop = steps
-                switches_prop = switches
 
-            if switches >= self.switch_limit - self.switches_passed:
+            if uturn:
                 break
 
         self.steps += steps
-        self.switches_passed = switches_prop
         self.proposal_steps = steps_prop
-        return theta_prop, lsw_prop, lsw
+        return theta_prop, lsw
 
     def draw(self):
         self.draws += 1
         try:
             theta = self.theta
             rho = self.rng.normal(size = self.D)
+            H_0 = self.log_joint(theta, rho)
 
             # forward pass
             self.prepare_forward_pass()
-            theta_star, lsw_star, FW = self.trajectory(theta, rho)
+            theta_star, FW = self.trajectory(theta, rho)
+            F = self.steps
 
             # only for comparisons, otherwise unnecessary
             self.store_forward_steps()
             self.store_proposal_steps()
 
             # backward pass
-            _, _, BW = self.trajectory(theta, -rho, lsw = lsw_star)
-            BW = self.logsubexp(BW, 0.0) # don't double count theta0
+            _, BW = self.trajectory(theta, -rho)
+            B = self.steps - F
+
+            # account for sub-uturns
+            if not(1 <= self.proposal_steps and self.proposal_steps <= B):
+                return self.theta
 
             # H_star - H_0 + (H_0 - BW) - (H_star - FW)
             log_alpha = FW - BW

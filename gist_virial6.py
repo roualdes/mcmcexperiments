@@ -3,20 +3,22 @@ import numpy as np
 import hmc
 import traceback
 
-class GISTV5(hmc.HMCBase):
+class GISTV6(hmc.HMCBase):
     """Virial GIST
 
     Propose from foward trajectory and balance with backward
     trajectory.  switch_limit can be greater than 1. Proposals are
     biased towards the end of the trajectory in segments consisting of
-    segment_length steps.  Biasing analogous to Stan.
+    segment_length steps.  Biasing analogous to Stan.  Trialing new biasing.
+
+    This seems to work well, but I don't understand why. Checkpoint.
 
     """
     def __init__(self, model, stepsize, theta = None, seed = None,
                  switch_limit = 1, segment_length = 2, **kwargs):
 
         super().__init__(model, stepsize, seed = seed)
-        self.sampler_name = f"GIST-V5_{switch_limit}"
+        self.sampler_name = f"GIST-V6_{switch_limit}"
 
         if theta is not None:
             self.theta = theta
@@ -53,7 +55,8 @@ class GISTV5(hmc.HMCBase):
         H_0 = self.log_joint(theta, rho)
         switches = 0
         steps = 0
-        lsw_segment = -np.inf
+        lsw_new = -np.inf
+        lsw_old = 0.0
         lsw_prop = -np.inf
         switches_passed = 0
         end_segment = False
@@ -76,31 +79,38 @@ class GISTV5(hmc.HMCBase):
                 switches += 1
                 sv = np.sign(v)
 
-            # sample new state
-            lsw_segment = np.logaddexp(lsw_segment, delta)
+            # track total energy
             lsw = np.logaddexp(lsw, delta)
+
+            # sample state within segment
+            # lsw_new = np.logaddexp(lsw_new, delta)
             log_alpha = delta - lsw
             if np.log(self.rng.uniform()) < np.minimum(0.0, log_alpha):
                 theta_star = theta
                 rho_star = rho
+                lsw_prop = lsw
                 switches_passed = switches
 
-            # sample from last segment and start new segment
+            # sample segment and start new segment
             if end_segment:
-                log_beta = lsw - lsw_segment
+                log_beta = lsw_new - lsw
                 if np.log(self.rng.uniform()) < np.minimum(0.0, log_beta):
                     theta_prop = theta_star
                     rho_prop = rho_star
                     proposal_steps = steps
                     lsw_prop = lsw
-                lsw_segment = -np.inf
+                # lsw_old = lsw_new
+                lsw_new = -np.inf
+            else:
+                lsw_new = np.logaddexp(lsw_new, delta)
 
             # if end_segment and reached switch limit, break
             if end_segment and switches >= self.switch_limit - switch_discount:
                 break
 
         self.steps += steps
-        return theta_prop, rho_prop, lsw_prop, lsw, switches_passed, proposal_steps
+        return theta_star, rho_star, lsw_prop, lsw, switches_passed, proposal_steps
+        # return theta_prop, rho_prop, lsw_prop, lsw, switches_passed, proposal_steps
 
     def draw(self):
         self.draws += 1
@@ -116,7 +126,7 @@ class GISTV5(hmc.HMCBase):
             _, _, _, BW, _, _ = self.trajectory(theta, -rho,
                                                 lsw = lsw_star,
                                                 switch_discount = switches_passed)
-            BW = self.logsubexp(BW, 0.0)
+            BW = self.logsubexp(BW, 0.0) # don't double count theta0
 
             # H_star - H_0 + (H_0 - BW) - (H_star - FW)
             log_alpha = FW - BW

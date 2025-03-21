@@ -1,5 +1,5 @@
 import numpy as np
-import MCMCBase from mcmc
+from mcmc import MCMCBase
 
 class HMCBase(MCMCBase):
     def __init__(self, model, stepsize, seed = None, theta = None):

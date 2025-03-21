@@ -65,12 +65,12 @@ class GISTV3(hmc.HMCBase):
             H = self.log_joint(theta, rho)
             d = 0.0
             if self.biased:
-                if self.biased == "switch":
-                    d = np.log(switches + 1)
-                elif self.biased == "distance":
-                    d = np.log(np.sum((theta - theta0) ** 2))
-                else:
-                    print("need specify biasing strategy")
+                # if self.biased == "switch":
+                d = np.log(switches + 1)
+                # elif self.biased == "distance":
+                #     d = np.log(np.sum((theta - theta0) ** 2))
+                # else:
+                #     print("need specify biasing strategy")
             H += d
 
             lsw = np.logaddexp(lsw, H - H_0)

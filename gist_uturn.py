@@ -9,7 +9,7 @@ class GISTU(hmc.HMCBase):
                  theta = None, seed = None,
                  sign_switch_limit = 1, **kwargs):
         super().__init__(model, stepsize, seed = seed)
-        self.sampler_name = "GIST-Uturn"
+        self.sampler_name = "GIST-U"
         if theta is None:
             self.theta = self.rng.normal(size = self.D)
         else:
@@ -18,10 +18,7 @@ class GISTU(hmc.HMCBase):
         self.draws = 0
         self.sign_switch_limit = sign_switch_limit
         self.steps = 0
-
-    def apogee(self, theta, rho):
-        _, g = self.model.log_density_gradient(theta)
-        return g.dot(rho)
+        self.forward_steps = 0
 
     def trajectory(self, theta, rho):
         theta0 = theta
@@ -44,14 +41,15 @@ class GISTU(hmc.HMCBase):
 
             F = self.trajectory(theta, rho)
             self.steps += F
+            self.forward_steps = F
             N = self.rng.integers(1, F + 1)
 
             theta_star, rho_star = self.leapfrog(theta, rho, N)
+            H_star = self.log_joint(theta_star, rho_star)
             self.steps += N
 
             B = self.trajectory(theta_star, -rho_star)
             self.steps += B
-            H_star = self.log_joint(theta_star, rho_star)
 
             if not(1 <= N and N <= B):
                 return self.theta
@@ -65,6 +63,6 @@ class GISTU(hmc.HMCBase):
 
             self.prop_accepted += (accepted - self.prop_accepted) / self.draws
         except Exception as e:
-            traceback.print_exc()
+            # traceback.print_exc()
             pass
         return self.theta

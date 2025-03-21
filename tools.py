@@ -3,30 +3,45 @@ import hashlib as hl
 import numpy as np
 import pandas as pd
 
+import duckdb
 import itertools
 import logging
+import warnings
 
-log = logging.getLogger(__name__)
+def stop_griping():
+    warnings.filterwarnings(
+        "ignore", message="Loading a shared object .* that has already been loaded.*"
+    )
+    csp.utils.get_logger().setLevel(logging.ERROR)
 
-def mean_sq_jumps(draws, digits = 3):
-    """Return mean of squared distances between consecutive draws."""
+def mean_sq_jumps(draws, digits = 4):
+    """
+    Return mean of squared distances between consecutive draws.
+    """
+
     M = np.shape(draws)[0]
     jumps = draws[range(1, M), :] - draws[range(0, M - 1), :]
     return np.round(np.mean([np.dot(jump, jump) for jump in jumps]), digits)
 
-def root_mean_square_error(theta, theta_sd, theta_hat, digits = 3):
-    """Compute the standardized (z-score) RMSE for theta_hat given the reference mean and standard deviation."""
-    return np.round(np.sqrt(np.sum(((theta_hat - theta) / theta_sd) ** 2) / np.size(theta)), digits)
+def root_mean_square_error(theta_hat, theta, theta_sd, digits = 4):
+    """
+    Compute the standardized (z-score) RMSE for theta_hat given the
+    reference mean and standard deviation.
+    """
 
+    z = (theta_hat - theta) / theta_sd
+    rmse = np.sqrt(np.mean(z * z))
+    return np.round(rmse, digits)
 
 def get_stan_files(cfg):
-    "From a Hydra config file, initialize stan and data file paths"
-    stan_file = f"{cfg["model_path"]}/{cfg["model_name"]}.stan"
-    data_file = f"{cfg["model_path"]}/{cfg["model_name"]}.json"
+    "From config file, initialize stan and data file paths"
+    stan_file = f"{cfg['model_path']}/{cfg['model_name']}.stan"
+    data_file = f"{cfg['model_path']}/{cfg['model_name']}.json"
     return stan_file, data_file
 
 def stan_initializations(cfg):
-    """Run Stan as the initializer for stepsize and theta.
+    """
+    Run Stan as the initializer for stepsize and theta.
     """
 
     stan_file, data_file = get_stan_files(cfg)
@@ -42,36 +57,22 @@ def stan_initializations(cfg):
                            show_console = False)
 
     draws = fit.draws(concat_chains = True)[:, 7:]
+    draws2 = draws ** 2
+
     num_draws = np.shape(draws)[0]
     rng = np.random.default_rng()
-    if cfg["replications"] > 0:
-        draw_idx = rng.choice(num_draws, size = cfg["replications"])
-    else:
-        draw_idx = rng.choice(num_draws)
+    draw_idx = rng.choice(num_draws, size = cfg["replications"])
 
-    m = np.mean(draws, axis = 0)
-    s = np.std(draws, ddof = 1, axis = 0)
+    cfg["param_names"] = list(fit.column_names[7:])
+    cfg["stepsize"] = fit.step_size[0] * 0.5
+    cfg["initial_theta_constrained"] = np.copy(draws[draw_idx, :])
+    cfg["gs_m"] = np.mean(draws, axis = 0)
+    cfg["gs_s"] = np.std(draws, ddof = 1, axis = 0)
+    cfg["gs_sq_m"] = np.mean(draws2, axis = 0)
+    cfg["gs_sq_s"] = np.std(draws2, axis = 0)
 
-    draws2 = draws ** 2
-    sq_m = np.mean(draws2, axis = 0)
-    sq_s = np.std(draws2, axis = 0)
-
-    inits = {
-        "param_names": list(fit.column_names[7:]),
-        "stepsize": fit.step_size[0], #  * 0.5,
-        "initial_theta_constrained": np.copy(draws[draw_idx, :]),
-        "mean": m,
-        "std": s,
-        "sq_mean": sq_m,
-        "sq_std": sq_s,
-    }
-
-    print_fit(cfg, inits)
-
-    return inits
-
-def run_stan(cfg, gold_standard):
-    "Run Stan for comparisons"
+def run_stan(cfg):
+    """Run Stan for comparisons"""
 
     stan_file, data_file = get_stan_files(cfg)
 
@@ -79,7 +80,7 @@ def run_stan(cfg, gold_standard):
     fit = csp_model.sample(data = data_file,
                            chains = 1,
                            metric = "unit_e",
-                           step_size = gold_standard["stepsize"],
+                           step_size = cfg["stepsize"],
                            iter_sampling = cfg["iterations"],
                            iter_warmup = cfg["warmup"],
                            adapt_engaged = False,
@@ -92,144 +93,74 @@ def run_stan(cfg, gold_standard):
     draws = draws[:, 7:]        # skip non-parameter columns
     m = np.mean(draws, axis = 0)
     s = np.std(draws, ddof = 1, axis = 0)
-
-    draws2 = draws ** 2
-    sq_m = np.mean(draws2, axis = 0)
-    sq_s = np.std(draws2, axis = 0)
-
-    gs_m = gold_standard["mean"]
-    gs_s = gold_standard["std"]
-    gs_sq_m = gold_standard["sq_mean"]
-    gs_sq_s = gold_standard["sq_std"]
+    m2 = np.mean(draws ** 2, axis = 0)
 
     out_dict = {
-        # "algorithm": "Stan",
-        "model": cfg["model_name"],
-        "mean": m,
-        "std": s,
-        "rmse": root_mean_square_error(gs_m, gs_s, m),
-        "rmse_sq": root_mean_square_error(gs_sq_m, gs_sq_s, s),
+        "algorithm": "Stan",
+        # "mean": m,
+        # "sd": s,
+        "rmse": root_mean_square_error(m, cfg["gs_m"], cfg["gs_s"]),
+        "rmse_sq": root_mean_square_error(m2, cfg["gs_sq_m"], cfg["gs_sq_s"]),
         "msjd": mean_sq_jumps(draws),
         "steps": leapfrog_steps,
-        "prop_accepted": 1.0,
+        "stepsize": cfg["stepsize"],
+        "mean_proposal_steps": -1,
+        "acceptance_rate": 1.0,
+        "switch_limit": -1,
     }
-
-    print_fit(cfg, out_dict, gold_standard)
 
     return out_dict
 
-def run_gist(cfg, gist_sampler, gold_standard):
+def run_gist(cfg, gist_sampler):
     "Run GIST sampler for comparisons"
 
     M = cfg["iterations"]
     warmup = cfg["warmup"]
-    samples = gist_sampler.sample_constrained(M + warmup)
+    d = gist_sampler.sample_constrained(M + warmup)
 
-    post_warmup_samples = samples[warmup:]
+    samples = d["thetas"]
+    post_warmup_samples = samples[warmup+1:]
+
     m = np.mean(post_warmup_samples, axis = 0)
     s = np.std(post_warmup_samples, ddof = 1, axis = 0)
-
-    gs_m = gold_standard["mean"]
-    gs_s = gold_standard["std"]
-    gs_sq_m = gold_standard["sq_mean"]
-    gs_sq_s = gold_standard["sq_std"]
+    m2 = np.mean(post_warmup_samples ** 2, axis = 0)
 
     out_dict = {
-        # "algorithm": gist_sampler.sampler_name,
-        # "model": cfg.model.name,
-        "mean": m,
-        "std": s,
-        "rmse": root_mean_square_error(gs_m, gs_s, m),
-        "rmse_sq": root_mean_square_error(gs_sq_m, gs_sq_s, s),
+        "algorithm": gist_sampler.sampler_name,
+        # "mean": m,
+        # "sd": s,
+        "rmse": root_mean_square_error(m, cfg["gs_m"], cfg["gs_s"]),
+        "rmse_sq": root_mean_square_error(m2, cfg["gs_sq_m"], cfg["gs_sq_s"]),
         "msjd": mean_sq_jumps(post_warmup_samples),
-        "steps": gist_sampler.steps,
-        "prop_accepted": gist_sampler.prop_accepted,
+        "steps": d["steps"],
+        "stepsize": cfg["stepsize"],
+        "mean_proposal_steps": d["mean_proposal_steps"],
+        "acceptance_rate": d["acceptance_rate"],
+        "switch_limit": gist_sampler.switch_limit if hasattr(gist_sampler, "switch_limit") else -1
     }
-
-    if hasattr(gist_sampler, "switch_prop"):
-        out_dict["switch_prop"] = gist_sampler.switch_prop
-
-    if hasattr(gist_sampler, "step_mean"):
-        out_dict["step_mean"] = gist_sampler.step_mean
-
-    print_fit(cfg, out_dict, gold_standard)
 
     return out_dict
 
+def store_run(db, cfg, out):
+    out["rep"] = cfg["rep"]
+    out["model"] = cfg["model_name"]
+    o = {k : [v] for k, v in out.items()}
+    df = pd.DataFrame(o)
+    db.sql("INSERT INTO stats BY NAME SELECT * FROM df")
 
-def print_fit(cfg, output_dict, gold_standard = None):
-    if cfg["print"]:
-        print()
-        # print(f"algorithm: {output_dict['algorithm']}")
-
-        digits = cfg["digits"]
-
-        if "prop_accepted" in output_dict:
-            print(f"P(accepted) = {output_dict['prop_accepted']}")
-
-        if "mean" in output_dict:
-            # print(f"mean = {np.round(output_dict['mean'], digits)}")
-
-            if gold_standard is not None:
-                print(f"P(mean > m) = {np.round(np.mean(output_dict['mean'] > gold_standard['mean']), digits)}")
-
-        if "std" in output_dict:
-            print(f"std = {np.round(output_dict['std'], digits)}")
-
-            if gold_standard is not None:
-                print(f"P(std > s) = {np.round(np.mean(output_dict['std'] > gold_standard['std']), digits)}")
-
-        if "rmse" in output_dict:
-            print(f"rmse = {np.round(output_dict['rmse'], digits)}")
-
-        if "rmse_sq" in output_dict:
-            print(f"rmse (sq) = {np.round(output_dict['rmse_sq'], digits)}")
-
-        if "msjd" in output_dict:
-            print(f"msjd = {np.round(output_dict['msjd'], digits)}")
-
-        if "steps" in output_dict:
-            print(f"steps = {np.round(output_dict['steps'], digits)}")
-
-        if "switch_prop" in output_dict:
-            prop = output_dict["switch_prop"]
-            total = np.sum(prop)
-            print(f"switch_mean = {np.round(prop / total, digits)}")
-
-        if "step_mean" in output_dict:
-            sm = output_dict["step_mean"]
-            print(f"step_mean = {np.round(sm, digits)}")
-
-def md5hash(x):
-    return hl.md5(x.encode("utf-8")).hexdigest()
-
-def initialize_dataframe(algorithms, models, num_replications):
-    """Initialize a DataFrame with zeros using lists of model names,
-    algorithm names, and the number of replications."""
-
-    reps = np.arange(1, num_replications + 1, dtype = np.int64).tolist()
-
-    df = pd.DataFrame.from_records(itertools.product(algorithms, models, reps),
-                                   columns = ["algorithm", "model", "replication"])
-
-    ldf = len(df)
-    df["rmse"] = np.zeros(ldf)
-    df["rmse_sq"] = np.zeros(ldf)
-    df["msjd"] = np.zeros(ldf)
-    df["steps"] = np.zeros(ldf)
-    df["prop_accepted"] = np.zeros(ldf)
-
-    df.index = (df["algorithm"]
-                .str.cat(df[["model", "replication"]].astype(str), sep = "-")
-                .apply(lambda x: md5hash(x)))
-
-    return df
-
-
-def logsubexp(a, b):
-    if a > b:
-        return a + np.log1p(-np.exp(b - a))
-    elif a < b:
-        return b + np.log1p(-np.exp(a - b))
-    else:
-        return np.inf
+def init_db(cfg):
+    db = duckdb.connect(cfg["db"])
+    db.sql("""CREATE TABLE IF NOT EXISTS stats (
+        algorithm VARCHAR,
+        model VARCHAR,
+        rep INTEGER,
+        rmse DOUBLE,
+        rmse_sq DOUBLE,
+        msjd DOUBLE,
+        steps BIGINT,
+        stepsize DOUBLE,
+        mean_proposal_steps DOUBLE,
+        acceptance_rate DOUBLE,
+        switch_limit INTEGER
+        )""")
+    return db

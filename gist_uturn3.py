@@ -3,36 +3,30 @@ import numpy as np
 import hmc
 import traceback
 
-class GISTV5(hmc.HMCBase):
-    """Virial GIST
+class GISTU3(hmc.HMCBase):
+    """GIST UTURN
 
-    Propose from foward trajectory and balance with backward
-    trajectory.  switch_limit can be greater than 1. Proposals are
-    biased towards the end of the trajectory in segments consisting of
-    segment_length steps.  Biasing analogous to Stan.
+    Online Multinoulli sampling during forward trajectory.  Proposals
+    are biased towards the end of the trajectory in segments
+    consisting of segment_length steps.  Biasing analogous to Stan.
 
     """
     def __init__(self, model, stepsize, theta = None, seed = None,
-                 switch_limit = 1, segment_length = 2, **kwargs):
+                 segment_length = 1, **kwargs):
 
         super().__init__(model, stepsize, seed = seed)
-        self.sampler_name = f"GIST-V5_{switch_limit}"
+        self.sampler_name = "GIST-UTURN-3"
 
         if theta is not None:
             self.theta = theta
 
         self.segment_length = segment_length
-        self.switch_limit = switch_limit
-
         self.steps = 0
         self.prop_accepted = 0.0
         self.draws = 0
         self.divergences = 0
         self.forward_steps = []
         self.mean_proposal_steps = 0
-
-    def virial(self, theta, rho):
-        return 2 * rho.dot(theta)
 
     def logsubexp(self, a, b):
         if a > b:
@@ -42,20 +36,16 @@ class GISTV5(hmc.HMCBase):
         else:
             return np.inf
 
-    def trajectory(self, theta, rho, lsw = 0.0, switch_discount = 0):
+    def trajectory(self, theta, rho, lsw = 0.0):
         theta0 = theta
+        last_distance = 0
         theta_star = theta
         rho_star = rho
-        theta_prop = theta
-        rho_prop = rho
-        v = self.virial(theta, rho)
-        sv = np.sign(v)
         H_0 = self.log_joint(theta, rho)
-        switches = 0
+        uturn = False
         steps = 0
         lsw_segment = -np.inf
-        lsw_prop = -np.inf
-        switches_passed = 0
+        lsw_star = -np.inf
         end_segment = False
         proposal_steps = 0
         while True:
@@ -70,11 +60,11 @@ class GISTV5(hmc.HMCBase):
                 self.divergences += 1
                 break
 
-            # check virial sign switch
-            v = self.virial(theta, rho)
-            if sv * np.sign(v) < 0:
-                switches += 1
-                sv = np.sign(v)
+            # check uturn
+            distance = np.sum((theta - theta0) ** 2)
+            if distance <= last_distance:
+                uturn = True
+            last_distance = distance
 
             # sample new state
             lsw_segment = np.logaddexp(lsw_segment, delta)
@@ -83,7 +73,8 @@ class GISTV5(hmc.HMCBase):
             if np.log(self.rng.uniform()) < np.minimum(0.0, log_alpha):
                 theta_star = theta
                 rho_star = rho
-                switches_passed = switches
+                lsw_star = H
+                proposal_steps = steps
 
             # sample from last segment and start new segment
             if end_segment:
@@ -95,12 +86,11 @@ class GISTV5(hmc.HMCBase):
                     lsw_prop = lsw
                 lsw_segment = -np.inf
 
-            # if end_segment and reached switch limit, break
-            if end_segment and switches >= self.switch_limit - switch_discount:
+            if uturn and end_segment:
                 break
 
         self.steps += steps
-        return theta_prop, rho_prop, lsw_prop, lsw, switches_passed, proposal_steps
+        return theta_star, rho_star, lsw, lsw_star, proposal_steps
 
     def draw(self):
         self.draws += 1
@@ -109,14 +99,19 @@ class GISTV5(hmc.HMCBase):
             rho = self.rng.normal(size = self.D)
             H_0 = self.log_joint(theta, rho)
 
-            theta_star, rho_star, lsw_star, FW, switches_passed, proposal_steps = self.trajectory(theta, rho)
-            self.forward_steps.append(self.steps)
+            theta_star, _, FW, lsw_star, proposal_steps = self.trajectory(theta, rho)
+            F = self.steps
+
+            self.forward_steps.append(F)
             self.mean_proposal_steps += (proposal_steps - self.mean_proposal_steps) / self.draws
 
-            _, _, _, BW, _, _ = self.trajectory(theta, -rho,
-                                                lsw = lsw_star,
-                                                switch_discount = switches_passed)
-            BW = self.logsubexp(BW, 0.0)
+            _, _, BW, _, _ = self.trajectory(theta, -rho)
+
+            B = self.steps - F
+
+            # account for sub-uturns
+            if not(1 <= proposal_steps and proposal_steps <= B):
+                return self.theta
 
             # H_star - H_0 + (H_0 - BW) - (H_star - FW)
             log_alpha = FW - BW

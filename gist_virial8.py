@@ -3,24 +3,24 @@ import numpy as np
 import hmc
 import traceback
 
-class GISTV4(hmc.HMCBase):
+class GISTV8(hmc.HMCBase):
     """Virial GIST
 
     Propose from foward trajectory and balance with backward
-    trajectory.  switch_limit can be greater than 1. Online
-    Multinoulli sampling during foward trajectory.
-
+    trajectory.  switch_limit can be greater than 1. Proposals are
+    biased towards the end of the trajectory in segments consisting of
+    segment_length steps.  Biasing analogous to Stan.
     """
-    def __init__(self, model, stepsize,
-                 theta = None, seed = None,
-                 switch_limit = 1, **kwargs):
+    def __init__(self, model, stepsize, theta = None, seed = None,
+                 switch_limit = 1, segment_length = 2, **kwargs):
 
         super().__init__(model, stepsize, seed = seed)
-        self.sampler_name = f"GIST-V4_{switch_limit}"
+        self.sampler_name = f"GIST-V8_{switch_limit}"
 
         if theta is not None:
             self.theta = theta
 
+        self.segment_length = segment_length
         self.switch_limit = switch_limit
         self.switches_passed = 0
 
@@ -29,7 +29,7 @@ class GISTV4(hmc.HMCBase):
         self.forward_steps = []
         self.mean_proposal_steps = 0.0
 
-        self.backward_proportion = 1
+        self.backward_proportion = 0.0
 
         self.acceptance_probability = 0.0
         self.divergences = 0
@@ -45,6 +45,10 @@ class GISTV4(hmc.HMCBase):
     def store_proposal_steps(self):
         d = self.proposal_steps - self.mean_proposal_steps
         self.mean_proposal_steps += d / self.draws
+
+    def store_backward_proportion(self, b):
+        d = b - self.backward_proportion
+        self.backward_proportion += d / self.draws
 
     def store_acceptance_probability(self, accepted):
         d = accepted - self.acceptance_probability
@@ -62,6 +66,7 @@ class GISTV4(hmc.HMCBase):
             return np.inf
 
     def trajectory(self, theta, rho, lsw = 0.0):
+        theta_star = theta
         theta_prop = theta
 
         v = self.virial(theta, rho)
@@ -69,15 +74,22 @@ class GISTV4(hmc.HMCBase):
         H0 = self.log_joint(theta, rho)
 
         steps = 0
+        steps_star = 0
         steps_prop = 0
 
+        lsw_segment = -np.inf
+        end_segment = False
+
+        lsw_star = -np.inf
         lsw_prop = -np.inf
 
         switches = 0
+        switches_star = 0
         switches_prop = 0
 
         while True:
             steps += 1
+            end_segment = steps % self.segment_length == 0
 
             theta, rho = self.leapfrog_step(theta, rho)
             H = self.log_joint(theta, rho)
@@ -92,19 +104,31 @@ class GISTV4(hmc.HMCBase):
                 switches += 1
                 sv = np.sign(v)
 
+            # multioulli: sample within segment
+            lsw_segment = np.logaddexp(lsw_segment, delta)
+            log_alpha = delta - lsw_segment
+            if np.log(self.rng.uniform()) < np.minimum(0.0, log_alpha):
+                theta_star = theta
+                lsw_star = lsw
+                steps_star = steps
+                switches_star = switches
+
+            # biased: sample segment
+            if end_segment:
+                log_beta = lsw_segment - lsw
+                if np.log(self.rng.uniform()) < np.minimum(0.0, log_beta):
+                    theta_prop = theta_star
+                    lsw_prop = lsw_star
+                    steps_prop = steps_star
+                    switches_prop = switches_star
+                lsw_segment = -np.inf
+
             # track total energy
             lsw = np.logaddexp(lsw, delta)
 
-            # multinoulli: sample within trajectory
-            log_alpha = delta - lsw
-            if np.log(self.rng.uniform()) < np.minimum(0.0, log_alpha):
-                theta_prop = theta
-                lsw_prop = lsw
-                steps_prop = steps
-                switches_prop = switches
-
-            if switches >= self.switch_limit - self.switches_passed:
-                break
+            if end_segment:
+                if switches >= self.switch_limit - self.switches_passed:
+                    break
 
         self.steps += steps
         self.switches_passed = switches_prop
@@ -125,9 +149,14 @@ class GISTV4(hmc.HMCBase):
             self.store_forward_steps()
             self.store_proposal_steps()
 
-            # backward pass
-            _, _, BW = self.trajectory(theta, -rho, lsw = lsw_star)
-            BW = self.logsubexp(BW, 0.0) # don't double count theta0
+            # backward pass not always necessary
+            if self.switches_passed < self.switch_limit:
+                _, _, BW  = self.trajectory(theta, -rho, lsw = lsw_star)
+                BW = self.logsubexp(BW, 0.0) # don't double count theta0
+                self.store_backward_proportion(1)
+            else:
+                self.store_backward_proportion(0)
+                BW = FW
 
             # H_star - H_0 + (H_0 - BW) - (H_star - FW)
             log_alpha = FW - BW
