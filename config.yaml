@@ -1,10 +1,10 @@
 print: True
 digits: 4
-iterations: 10_000
-warmup: 5_000
+iterations: 1_000
+warmup: 500
 replications: 20
 seed: null
-stepsize: 0.005
+stepsize: 0.24
 switch_limit: 3
 segment_length: 2
 db: experiments.db
@@ -12,7 +12,7 @@ db: experiments.db
 bs_path: ~/bridgestan
 
 model_path: stan
-model_name: arK
+model_name: normal
 
 init:
   warmup: 10_000
