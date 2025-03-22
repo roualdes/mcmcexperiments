@@ -29,8 +29,6 @@ class GISTV4(hmc.HMCBase):
         self.forward_steps = []
         self.mean_proposal_steps = 0.0
 
-        self.backward_proportion = 1
-
         self.acceptance_probability = 0.0
         self.divergences = 0
         self.draws = 0
@@ -39,11 +37,11 @@ class GISTV4(hmc.HMCBase):
         self.switches_passed = 0
         self.proposal_steps = 0
 
-    def store_forward_steps(self):
-        self.forward_steps.append(self.steps)
+    def store_forward_steps(self, steps):
+        self.forward_steps.append(steps)
 
-    def store_proposal_steps(self):
-        d = self.proposal_steps - self.mean_proposal_steps
+    def store_proposal_steps(self, steps):
+        d = steps - self.mean_proposal_steps
         self.mean_proposal_steps += d / self.draws
 
     def store_acceptance_probability(self, accepted):
@@ -61,7 +59,8 @@ class GISTV4(hmc.HMCBase):
         else:
             return np.inf
 
-    def trajectory(self, theta, rho, lsw = 0.0):
+    def trajectory(self, theta, rho, lsw = 0.0,
+                   forward = True):
         theta_prop = theta
 
         v = self.virial(theta, rho)
@@ -107,9 +106,10 @@ class GISTV4(hmc.HMCBase):
                 break
 
         self.steps += steps
-        self.switches_passed = switches_prop
-        self.proposal_steps = steps_prop
-        return theta_prop, lsw_prop, lsw
+        if forward:
+            self.switches_passed = switches_prop
+            self.store_forward_steps(steps)
+        return theta_prop, lsw_prop, steps_prop, lsw
 
     def draw(self):
         self.draws += 1
@@ -119,14 +119,10 @@ class GISTV4(hmc.HMCBase):
 
             # forward pass
             self.prepare_forward_pass()
-            theta_star, lsw_star, FW = self.trajectory(theta, rho)
-
-            # only for comparisons, otherwise unnecessary
-            self.store_forward_steps()
-            self.store_proposal_steps()
+            theta_star, lsw_star, steps_star, FW = self.trajectory(theta, rho, forward = True)
 
             # backward pass
-            _, _, BW = self.trajectory(theta, -rho, lsw = lsw_star)
+            _, _, _, BW = self.trajectory(theta, -rho, lsw = lsw_star)
             BW = self.logsubexp(BW, 0.0) # don't double count theta0
 
             # H_star - H_0 + (H_0 - BW) - (H_star - FW)
@@ -136,6 +132,7 @@ class GISTV4(hmc.HMCBase):
             if np.log(self.rng.uniform()) < np.minimum(0.0, log_alpha):
                 accepted = 1
                 self.theta = theta_star
+                self.store_proposal_steps(steps_star)
 
             # only for comparisons, otherwise unnecessary
             self.store_acceptance_probability(accepted)

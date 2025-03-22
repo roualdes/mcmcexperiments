@@ -1,7 +1,7 @@
 print: True
 digits: 4
 iterations: 1_000
-warmup: 500
+warmup: 1_000
 replications: 20
 seed: null
 stepsize: 0.24

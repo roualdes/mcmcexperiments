@@ -21,29 +21,22 @@ class GISTU2(hmc.HMCBase):
         self.forward_steps = []
         self.mean_proposal_steps = 0.0
 
-        self.backward_proportion = 1
-
         self.acceptance_probability = 0.0
         self.divergences = 0
         self.draws = 0
 
-    def prepare_forward_pass(self):
-        self.switches_passed = 0
-        self.proposal_steps = 0
+    def store_forward_steps(self, steps):
+        self.forward_steps.append(steps)
 
-    def store_forward_steps(self):
-        self.forward_steps.append(self.steps)
-
-    def store_proposal_steps(self):
-        d = self.proposal_steps - self.mean_proposal_steps
+    def store_proposal_steps(self, steps):
+        d = steps - self.mean_proposal_steps
         self.mean_proposal_steps += d / self.draws
 
     def store_acceptance_probability(self, accepted):
         d = accepted - self.acceptance_probability
         self.acceptance_probability += d / self.draws
 
-
-    def trajectory(self, theta, rho):
+    def trajectory(self, theta, rho, forward = False):
         theta0 = theta
         theta_prop = theta
         rho_prop = rho
@@ -56,7 +49,6 @@ class GISTU2(hmc.HMCBase):
 
         H0 = self.log_joint(theta, rho)
         lsw = 0.0 # H0 - H0
-        lsw_prop = -np.inf
 
         while True:
             steps += 1
@@ -81,38 +73,29 @@ class GISTU2(hmc.HMCBase):
             log_alpha = delta - lsw
             if np.log(self.rng.uniform()) < np.minimum(0.0, log_alpha):
                 theta_prop = theta
-                lsw_prop = lsw
+                rho_prop = rho
                 steps_prop = steps
 
             if uturn:
                 break
 
         self.steps += steps
-        self.proposal_steps = steps_prop
-        return theta_prop, lsw
+        if forward:
+            self.store_forward_steps(steps)
+        return theta_prop, rho_prop, steps_prop, steps, lsw
 
     def draw(self):
         self.draws += 1
         try:
             theta = self.theta
             rho = self.rng.normal(size = self.D)
-            H_0 = self.log_joint(theta, rho)
 
-            # forward pass
-            self.prepare_forward_pass()
-            theta_star, FW = self.trajectory(theta, rho)
-            F = self.steps
+            theta_star, rho_star, F, _, FW = self.trajectory(theta, rho, forward = True)
 
-            # only for comparisons, otherwise unnecessary
-            self.store_forward_steps()
-            self.store_proposal_steps()
-
-            # backward pass
-            _, BW = self.trajectory(theta, -rho)
-            B = self.steps - F
+            _, _, _, B, BW = self.trajectory(theta_star, -rho_star)
 
             # account for sub-uturns
-            if not(1 <= self.proposal_steps and self.proposal_steps <= B):
+            if not(1 <= F and F <= B):
                 return self.theta
 
             # H_star - H_0 + (H_0 - BW) - (H_star - FW)
@@ -122,6 +105,7 @@ class GISTU2(hmc.HMCBase):
             if np.log(self.rng.uniform()) < np.minimum(0.0, log_alpha):
                 accepted = 1
                 self.theta = theta_star
+                self.store_proposal_steps(F)
 
             # only for comparisons, otherwise unnecessary
             self.store_acceptance_probability(accepted)

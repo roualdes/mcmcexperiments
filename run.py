@@ -17,6 +17,7 @@ import yaml
 import time
 import sys
 
+
 with open("config.yaml") as f:
     cfg = yaml.safe_load(f)
 
@@ -48,7 +49,6 @@ print(f"time = {dt}")
 print(f"steps = {d['steps']}")
 print(f"acceptance rate = {d['acceptance_rate']}")
 print(f"mean_proposal_steps = {d['mean_proposal_steps']}")
-print(f"backward_proportion = {d['backward_proportion']}")
 
 plt.hist(d["forward_steps"],
          color = "green", label = algo.sampler_name,
@@ -77,7 +77,6 @@ print(f"time = {dt}")
 print(f"steps = {d['steps']}")
 print(f"acceptance rate = {d['acceptance_rate']}")
 print(f"mean_proposal_steps = {d['mean_proposal_steps']}")
-print(f"backward_proportion = {d['backward_proportion']}")
 
 plt.hist(d["forward_steps"],
          color = "blue", label = algo.sampler_name,
@@ -104,11 +103,11 @@ print(f"time = {dt}")
 print(f"steps = {d['steps']}")
 print(f"acceptance rate = {d['acceptance_rate']}")
 print(f"mean_proposal_steps = {d['mean_proposal_steps']}")
-print(f"backward_proportion = {d['backward_proportion']}")
 
 plt.hist(d["forward_steps"],
          label = "GIST-U2", color = "orange",
          histtype = "step", density = True)
+
 plt.xlabel("forward_steps")
 plt.title(f"cfg['model_name']")
 plt.legend()

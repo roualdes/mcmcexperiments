@@ -42,12 +42,10 @@ class MCMCBase():
         thetas[0, :] = self.model.constrain(self.theta)
         mean_proposal_steps = 0
         for m in range(1, M):
-            # print(f"draw = {m}")
             theta_m = self.draw()
             thetas[m, :] = self.model.constrain(theta_m)
         return {"thetas": thetas,
                 "steps": self.steps,
-                "backward_proportion": self.backward_proportion,
                 "mean_proposal_steps": self.mean_proposal_steps,
-                "forward_steps": np.array(self.forward_steps) / M,
+                "forward_steps": np.array(self.forward_steps),
                 "acceptance_rate": self.acceptance_probability}
