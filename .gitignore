@@ -177,3 +177,4 @@ stan/*
 *.png
 play.py
 *.db
+*.parquet
