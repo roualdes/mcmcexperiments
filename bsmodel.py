@@ -11,11 +11,22 @@ class BSModel():
                                   make_args=["STAN_THREADS=True"],
                                   warn = warn)
 
-    def log_density(self, theta):
-        return self.model.log_density(theta)
+    def log_density(self, theta, **kws):
+        ld = np.NINF
+        try:
+            ld = self.model.log_density(theta, **kws)
+        except Exception as e:
+            pass
+        return ld
 
-    def log_density_gradient(self, theta):
-        return self.model.log_density_gradient(theta)
+    def log_density_gradient(self, theta, **kws):
+        ld = np.NINF
+        grad = np.zeros_like(theta)
+        try:
+            ld, grad = self.model.log_density_gradient(theta, **kws)
+        except Exception as e:
+            pass
+        return ld, grad
 
     def dim(self):
         return self.model.param_unc_num()

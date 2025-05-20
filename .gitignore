@@ -171,9 +171,9 @@ cython_debug/
 .pypirc
 
 .virtual_documents/
-experiments.db
 stan/*
 !stan/*.json
 !stan/*.stan
 *.png
 play.py
+*.db

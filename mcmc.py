@@ -12,7 +12,7 @@ class MCMCBase():
             self.rng = np.random.default_rng(seed)
 
         if theta is None:
-            self.theta = self.rng.normal(size = self.D)
+            self.theta = self.rng.normal(scale = 0.1, size = self.D)
         else:
             self.theta = theta
 
@@ -34,6 +34,8 @@ class MCMCBase():
         thetas[0, :] = self.theta;
         for m in range(1, M):
             thetas[m, :] = self.draw()
+        if hasattr(self, "acceptance_probability"):
+            print(f"acceptance rate = {self.acceptance_probability}")
         return thetas
 
     def sample_constrained(self, M):

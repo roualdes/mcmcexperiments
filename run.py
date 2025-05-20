@@ -4,6 +4,7 @@ from randomwalk import RW
 from gist_uturn2 import GISTU2
 from gist_virial4 import GISTV4
 from gist_virial8 import GISTV8
+from gist_virial10 import GISTV10
 
 import bridgestan as bs
 import cmdstanpy as csp
@@ -54,10 +55,10 @@ plt.hist(d["forward_steps"],
          color = "green", label = algo.sampler_name,
          histtype = "step", density = True)
 
-################ GISTV8 ################
+################ GISTV10 ################
 
-print("GISTV8")
-algo = GISTV8(bs_model, cfg["stepsize"], cfg["seed"],
+print("GISTV10")
+algo = GISTV10(bs_model, cfg["stepsize"], cfg["seed"],
               switch_limit = cfg["switch_limit"],
               segment_length = cfg["segment_length"])
 
@@ -75,8 +76,8 @@ print(f"std = {np.round(s, cfg['digits'])}")
 print(f"msjd = {msjd}")
 print(f"time = {dt}")
 print(f"steps = {d['steps']}")
-print(f"acceptance rate = {d['acceptance_rate']}")
-print(f"mean_proposal_steps = {d['mean_proposal_steps']}")
+print(f"acceptance rate = {np.round(d['acceptance_rate'], cfg['digits'])}")
+print(f"mean_proposal_steps = {np.round(d['mean_proposal_steps'], cfg['digits'])}")
 
 plt.hist(d["forward_steps"],
          color = "blue", label = algo.sampler_name,
