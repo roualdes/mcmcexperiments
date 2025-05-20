@@ -46,8 +46,12 @@ class MCMCBase():
         for m in range(1, M):
             theta_m = self.draw()
             thetas[m, :] = self.model.constrain(theta_m)
-        return {"thetas": thetas,
-                "steps": self.steps,
-                "mean_proposal_steps": self.mean_proposal_steps,
-                "forward_steps": np.array(self.forward_steps),
-                "acceptance_rate": self.acceptance_probability}
+        return {
+            "sampler_name": self.sampler_name,
+            "thetas": thetas,
+            "steps": self.steps,
+            "mean_proposal_steps": self.mean_proposal_steps,
+            "mean_stopping_steps": self.mean_stopping_steps,
+            "forward_steps": np.array(self.forward_steps),
+            "acceptance_rate": self.acceptance_rate
+        }

@@ -5,5 +5,5 @@ parameters {
   vector[D] y;
 }
 model {
-  y ~ normal(20, 1);
+  y ~ normal(0, 1);
 }
