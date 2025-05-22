@@ -18,13 +18,13 @@ import json
 import yaml
 
 
-with open("../config.yaml") as f:
+with open("config.yaml") as f:
     cfg = yaml.safe_load(f)
 bs.set_bridgestan_path(Path(cfg["bs_path"]).expanduser())
 # stan_file, data_file = tls.get_stan_files(cfg)
 
-bs_model = BSModel(stan_file = "../stan/one_normal.stan",
-                   data_file = "../stan/one_normal.json")
+bs_model = BSModel(stan_file = "../stan/normal.stan",
+                   data_file = "../stan/normal.json")
 
 M = 10_000
 

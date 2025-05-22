@@ -30,7 +30,7 @@ class KLHR(MCMCBase):
         out = 0.0
         for xn, wn in zip(self.x, self.w):
             zn = np.sqrt(2) * np.exp(theta[1]) * xn + theta[0]
-            thetan = self._to_rho(zn, rho, 0) # self.theta)
+            thetan = self._to_rho(zn, rho, self.theta)
             out += wn * self.model.log_density(thetan)
         return -out / np.sqrt(np.pi) - theta[1]
 
@@ -47,21 +47,17 @@ class KLHR(MCMCBase):
     def _to_rho(self, x, rho, origin):
         return x.reshape(-1, 1) * rho + origin
 
-    def _from_rho(self, x, rho):
-        return (x.flatten() / rho)[0]
-
     def _log_normal(self, x, m, s):
         z = (x - m) / s
         return -np.log(s) - 0.5 * z * z
 
     def _metropolis_step(self, m, s, rho):
-        mu = m - self._from_rho(self.theta, rho)
-        zp = self.rng.normal(loc = mu, scale = s, size = 1)
+        zp = self.rng.normal(loc = m, scale = s, size = 1)
         thetap = self._to_rho(zp, rho, self.theta)
 
         a = self.model.log_density(thetap) - self.model.log_density(self.theta)
-        a += self._log_normal(self._from_rho(self.theta, rho), m, s)
-        a -= self._log_normal(self._from_rho(thetap, rho), m, s)
+        a += self._log_normal(0, m, s)
+        a -= self._log_normal(zp, m, s)
 
         accept = np.log(self.rng.uniform()) < np.minimum(0, a)
         if accept:

@@ -175,6 +175,6 @@ stan/*
 !stan/*.json
 !stan/*.stan
 *.png
-play.py
 *.db
 *.parquet
+klhr/play
