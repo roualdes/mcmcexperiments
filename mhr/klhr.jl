@@ -31,8 +31,6 @@ function bsmodel_ldg(bsmodel)
     return bsm_ldg
 end
 
-
-
 function LVI(ldg, eta, x, w, rho, origin)
     N = length(x)
     dm = zero(eltype(x))
@@ -74,6 +72,21 @@ function dadvi_esque(ldg, rho, origin; N = 20, tol = 1e-2)
     return mkl, skl
 end
 
+function overrelaxed_proposal(NDist, K)
+    u = cdf(NDist, 0)
+    r = rand(Binomial(K, u))
+    up = if r > K - r
+        v = rand(Beta(K - r + 1, 2r - K))
+        u * v
+    elseif r < K - r
+        v = rand(Beta(r + 1, K - 2r))
+        1 - (1 - u) * v
+    elseif r == K - r
+        u
+    end
+    return quantile(NDist, up)
+end
+
 function klhr(bsmodel; M = 1_000, N = 10, overrelaxed = false, K = 32, tol = 1e-2, init = [])
     D = BS.param_unc_num(bsmodel)
     draws = zeros(M, D)
@@ -98,18 +111,7 @@ function klhr(bsmodel; M = 1_000, N = 10, overrelaxed = false, K = 32, tol = 1e-
 
         N = Normal(mkl, skl)
         z = if overrelaxed
-            u = cdf(N, 0)
-            r = rand(Binomial(K, u))
-            up = if r > K - r
-                v = rand(Beta(K - r + 1, 2r - K))
-                u * v
-            elseif r < K - r
-                v = rand(Beta(r + 1, K - 2r))
-                1 - (1 - u) * v
-            elseif r == K - r
-                u
-            end
-            quantile(N, up)
+            overrelaxed_proposal(N, K)
         else
             rand(N)
         end
