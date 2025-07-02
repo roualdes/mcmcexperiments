@@ -11,87 +11,92 @@ from gist_virial_biased import GISTVB
 from gist_virial_distance import GISTVD
 from gist_virial_multinoulli import GISTVM
 
+import click
+
 import bridgestan as bs
 import cmdstanpy as csp
 import numpy as np
 import tools as tls
 import pandas as pd
+import summary as smry
 
-import json
-import pprint
-import yaml
-import time
-
-if len(sys.argv) < 3:
-    print("Please provide a model and an algorithm as arguments.")
-    sys.exit(0)
-
-algo = sys.argv[1]
-model = sys.argv[2]
-
-algos = {
-    "stan": "",
-    "gistum": GISTUM,
-    "gistvb": GISTVB,
-    "gistvd": GISTVD,
-    "gistvm": GISTVM
+config = {
+    "iterations": 1_000,
+    "warmup": 1_000,
+    "model_path": "../stan",
+    "verbose": False,
+    "stepsize_factor": 1,
+    "output": "./output/algorithm_by_model",
+    "seed": 204,
+    "replications": 20,
 }
 
-algorithm = algos[algo]
+@click.command()
+@click.argument("algorithm", type=str)
+@click.argument("model", type=str)
+def main(algorithm, model):
 
-if algo not in algos.keys():
-    print("Unknown algorithm: {algo}.")
-    sys.exit(0)
+    algorithms = {
+        "stan": "",
+        "gistum": GISTUM,
+        "gistvb": GISTVB,
+        "gistvd": GISTVD,
+        "gistvm": GISTVM
+    }
+    if algorithm not in algorithms.keys():
+        print(f"unknown algorithm: {algorithm}")
+        sys.exit(0)
 
-print(f"ALGO: {algo}\033[K")
+    if config["verbose"]:
+        print(f"ALGORITHM: {algorithm}\033[K")
+    alg = algorithms[algorithm]
 
-models = [
-    "normal",
-    "ill-normal",
-    "corr-normal",
-    "rosenbrock",
-    "glmm-poisson",
-    "hmm",
-    "garch",
-    "lotka-volterra",
-    "arma",
-    "arK"
-]
+    models = [f.stem for f in Path(config["model_path"]).glob("*.stan") if f.is_file()]
+    if model not in models:
+        print(f"Unknown model: {model}")
+        print(f"Available models are: {models}")
+        sys.exit(0)
 
-if model not in models:
-    print("Unknown model: {model}.")
-    sys.exit(0)
+    config["model_name"] = model
+    if config["verbose"]:
+        print(f"MODEL: {model}\033[K")
 
-with open("config.yaml") as f:
-    cfg = yaml.safe_load(f)
-# pprint.pp(cfg)
+    bs.set_bridgestan_path(Path().home() / "bridgestan")
+    csp.set_cmdstan_path(str(Path().home() / "cmdstan"))
+    if config["verbose"]:
+        print("building model...\033[K", end = "\r")
 
-tls.stop_griping()
-bs.set_bridgestan_path(Path(cfg["bs_path"]).expanduser())
+    stan_file = f"{config['model_path']}/{model}.stan"
+    data_file = f"{config['model_path']}/{model}.json"
+    bs_model = BSModel(stan_file = stan_file, data_file = data_file)
 
-print(f"MODEL: {model}\033[K")
-cfg["model_name"] = model
+    tls.stop_griping()
+    tls.goldstandard_details(config)
+    results = tls.create_results_container()
 
-print("building model...\033[K", end = "\r")
-stan_file, data_file = tls.get_stan_files(cfg)
-bs_model = BSModel(stan_file = stan_file, data_file = data_file)
+    for rep in range(config["replications"]):
+        if config["verbose"]:
+            print(f"rep: {rep}\033[K", end = "\r")
 
-tls.goldstandard_details(cfg)
+        config["seed"] += rep
 
-if algo == "stan":
+        init_constrained_theta = config["init_constrained_theta"][rep]
 
-    for rep in range(cfg["replications"]):
-        print(f"rep: {rep}\033[K", end = "\r")
-        init_theta = bs_model.unconstrain(cfg["init_unc_theta"][rep])
-        cfg["init_theta"] = init_theta
-        sout = tls.run_stan(cfg)
-        pd.DataFrame([sout]).to_parquet(f"./output/{algo}_{model}.parquet")
+        if algorithm == "stan":
 
-else:
+            config["init_theta"] = init_constrained_theta
+            out = tls.run_stan(config)
+        else:
+            init_unc_theta = bs_model.unconstrain(np.array(init_constrained_theta))
+            g = alg(bs_model,
+                    config["stepsize_factor"] * config["stepsize"],
+                    theta = init_unc_theta,
+                    seed = config["seed"])
+            out = tls.run_gist(config, g)
 
-    for rep in range(cfg["replications"]):
-        print(f"rep: {rep}\033[K", end = "\r")
-        init_theta = bs_model.unconstrain(cfg["init_unc_theta"][rep])
-        g = algorithm(bs_model, cfg["stepsize"], theta = init_theta)
-        gout = tls.run_gist(cfg, g)
-        pd.DataFrame([gout]).to_parquet(f"./output/{algo}_{model}.parquet")
+        out["rep"] = rep
+        tls.update_all_results(results, out)
+        pd.DataFrame(results).to_parquet(f"{config['output']}/{algorithm}_{model}.parquet")
+
+if __name__ == "__main__":
+    main()

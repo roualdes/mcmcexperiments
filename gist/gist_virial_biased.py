@@ -13,11 +13,8 @@ class GISTVB(hmc.HMCBase):
     def __init__(self, model, stepsize, theta = None, seed = None,
                  switch_limit = 3, segment_length = 2, **kwargs):
 
-        super().__init__(model, stepsize, seed = seed)
+        super().__init__(model, stepsize, theta = theta, seed = seed)
         self.sampler_name = "GIST-Virial-Biased"
-
-        if theta is not None:
-            self.theta = theta
 
         self.switch_limit = switch_limit
         self.segment_length = segment_length

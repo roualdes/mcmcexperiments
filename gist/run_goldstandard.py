@@ -6,60 +6,88 @@ sys.path.insert(0, parent_dir)
 
 from pathlib import Path
 
+import click
+import yaml
+
 import cmdstanpy as csp
 import numpy as np
 import pandas as pd
 import tools as tls
 
-import yaml
 
-with open("config.yaml") as f:
-    cfg = yaml.safe_load(f)
+config = {
+    "iterations": 20_000,
+    "warmup": 50_000,
+    "model_path": "../stan",
+    "verbose": False,
+    "stepsize_factor": 1,
+    "output": "./output/algorithm_by_model",
+    "seed": 95926,
+    "replications": 20,
+}
 
-csp_path = Path.home() / "cmdstan"
-csp.set_cmdstan_path(str(csp_path))
-tls.stop_griping()
+@click.command()
+@click.argument("model", type=str)
+def main(model):
 
-if len(sys.argv) < 2:
-    print("Please provide a string as a command-line argument.")
-    sys.exit(0)
+    models = [f.stem for f in Path(config["model_path"]).glob("*.stan") if f.is_file()]
+    if model not in models:
+        print(f"Unknown model: {model}")
+        print(f"Available models are: {models}")
+        sys.exit(0)
 
+    config["model_name"] = model
+    if config["verbose"]:
+        print(f"MODEL: {model}\033[K")
 
-model = sys.argv[1]
+    csp.set_cmdstan_path(str(Path.home() / "cmdstan"))
+    tls.stop_griping()
 
-models = [
-    "normal",
-    "ill-normal",
-    "corr-normal",
-    "rosenbrock",
-    "glmm-poisson",
-    "hmm",
-    "garch",
-    "lotka-volterra",
-    "arma",
-    "arK"
-]
+    if config["verbose"]:
+        print("building model...\033[K", end = "\r")
 
-if model not in models:
-    print("Unknown model: {model}.")
-    sys.exit(0)
+    stan_file = f"{config['model_path']}/{model}.stan"
+    data_file = f"{config['model_path']}/{model}.json"
+    stan_model = csp.CmdStanModel(stan_file = stan_file, force_compile = True)
 
-print(f"MODEL: {model}\033[K", end = "\r")
+    if config["verbose"]:
+        print("running model...\033[K", end = "\r")
 
-cfg["model_name"] = model
+    fit = stan_model.sample(data = data_file,
+                                adapt_delta = 0.9,
+                                seed = config["seed"],
+                                chains = 1,
+                                metric="unit_e",
+                                iter_warmup = config["iterations"],
+                                iter_sampling = config["warmup"],
+                                show_progress = False,
+                                show_console = False)
 
-print("building model...\033[K", end = "\r")
-sf, df = tls.get_stan_files(cfg)
-stan_model = csp.CmdStanModel(stan_file = sf, force_compile = True)
+    draws_df = fit.draws_pd()
+    draws = draws_df.iloc[:, 10:]
 
-print("running model...\033[K", end = "\r")
-fit = stan_model.sample(data = df,
-                        adapt_delta = 0.9,
-                        chains = 1,
-                        iter_warmup = 25_000,
-                        iter_sampling = 50_000,
-                        show_progress = False,
-                        show_console = False)
+    experiment_data = {}
 
-draws_df = fit.draws_pd()
-draws_df.to_parquet(f"./output/goldstandard_{model}.parquet")
+    # starting points
+    rng = np.random.default_rng(config["seed"])
+    idx = rng.integers(draws.shape[0], size = config["replications"])
+    experiment_data["init_constrained_theta"] = draws.iloc[idx].values.copy().tolist()
+
+    # stepsize
+    experiment_data["stepsize"] = draws_df["stepsize__"].values[-1].tolist()
+
+    # summary stats
+    experiment_data["gs_m"] = np.mean(draws, axis = 0).tolist()
+    experiment_data["gs_s"] = np.std(draws, ddof = 1, axis = 0).tolist()
+
+    draws2 = draws ** 2
+    experiment_data["gs_sq_m"] = np.mean(draws2, axis = 0).tolist()
+    experiment_data["gs_sq_s"] = np.std(draws2, axis = 0).tolist()
+    experiment_data["param_names"] = draws.columns.tolist()
+
+    experiment_file = f"{config['model_path']}/{config['model_name']}.yaml"
+    with open(experiment_file, "w") as outfile:
+        yaml.dump(experiment_data, outfile)
+
+if __name__ == "__main__":
+    main()

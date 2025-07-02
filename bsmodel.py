@@ -12,15 +12,16 @@ class BSModel():
                                   warn = warn)
 
     def log_density(self, theta, **kws):
-        ld = np.NINF
+        ld = -np.inf
         try:
             ld = self.model.log_density(theta, **kws)
         except Exception as e:
+            print(f"error: {e}")
             pass
         return ld
 
     def log_density_gradient(self, theta, **kws):
-        ld = np.NINF
+        ld = -np.inf
         grad = np.zeros_like(theta)
         try:
             ld, grad = self.model.log_density_gradient(theta, **kws)

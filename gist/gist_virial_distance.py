@@ -13,11 +13,8 @@ class GISTVD(hmc.HMCBase):
                  theta = None, seed = None,
                  switch_limit = 3, **kwargs):
 
-        super().__init__(model, stepsize, seed = seed)
+        super().__init__(model, stepsize, theta = theta, seed = seed)
         self.sampler_name = "GIST-Virial-Distance"
-
-        if theta is not None:
-            self.theta = theta
 
         self.switch_limit = switch_limit
         self.switches_passed = 0

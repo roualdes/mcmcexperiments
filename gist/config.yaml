@@ -1,8 +1,0 @@
-digits: 6
-iterations: 1_000
-warmup: 1_000
-replications: 20
-seed: 204
-bs_path: ~/bridgestan
-model_path: ../stan/
-model_name: normal

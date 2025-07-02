@@ -23,4 +23,4 @@ class HMCBase(MCMCBase):
         try:
             return self.model.log_density(theta) - 0.5 * rho.dot(rho)
         except Exception as e:
-            return np.NINF
+            return -np.inf

@@ -11,11 +11,8 @@ class GISTUM(hmc.HMCBase):
     """
     def __init__(self, model, stepsize, theta = None, seed = None, **kwargs):
 
-        super().__init__(model, stepsize, seed = seed)
+        super().__init__(model, stepsize, theta = theta, seed = seed)
         self.sampler_name = "GIST-Uturn-Multinoulli"
-
-        if theta is not None:
-            self.theta = theta
 
         # only for comparisons, otherwise unnecessary
         self.steps = 0
