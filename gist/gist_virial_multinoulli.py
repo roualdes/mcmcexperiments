@@ -59,6 +59,7 @@ class GISTVM(hmc.HMCBase):
 
     def trajectory(self, theta, rho, lsw = 0.0, forward = False):
         theta_prop = theta
+        rho_prop = rho
 
         v = self.virial(theta, rho)
         sv = np.sign(v)
@@ -95,9 +96,10 @@ class GISTVM(hmc.HMCBase):
             log_alpha = delta - lsw
             if np.log(self.rng.uniform()) < np.minimum(0.0, log_alpha):
                 theta_prop = theta
+                rho_prop = rho
                 lsw_prop = lsw
                 steps_prop = steps_stop
-                switches_prop = switches
+                switches_prop = 0 # switches
 
             if switches >= self.switch_limit - self.switches_passed:
                 break
@@ -109,7 +111,7 @@ class GISTVM(hmc.HMCBase):
             self.update_stopping_steps(steps_stop)
             self.update_proposal_steps(steps_prop)
 
-        return theta_prop, lsw_prop, lsw
+        return theta_prop, lsw_prop, steps_prop, steps_stop, lsw
 
     def draw(self):
         self.draws += 1
@@ -118,9 +120,13 @@ class GISTVM(hmc.HMCBase):
             rho = self.rng.normal(size = self.D)
 
             self.prepare_forward_pass()
-            theta_star, lsw_star, FW = self.trajectory(theta, rho, forward = True)
-            _, _, BW = self.trajectory(theta, -rho, lsw = lsw_star)
+            theta_star, lsw_star, F, _, FW = self.trajectory(theta, rho, forward = True)
+            _, _, _, B, BW = self.trajectory(theta, -rho, lsw = lsw_star)
             BW = self.logsubexp(BW, 0.0) # don't double count theta0
+
+            if not(1 <= F and 0 <= B):
+                self.update_acceptance_rate(False)
+                return self.theta
 
             # H_star - H_0 + (H_0 - BW) - (H_star - FW)
             log_alpha = FW - BW

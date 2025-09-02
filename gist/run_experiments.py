@@ -83,7 +83,6 @@ def main(algorithm, model):
         init_constrained_theta = config["init_constrained_theta"][rep]
 
         if algorithm == "stan":
-
             config["init_theta"] = init_constrained_theta
             out = tls.run_stan(config)
         else:

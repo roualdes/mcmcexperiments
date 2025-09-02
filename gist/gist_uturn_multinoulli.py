@@ -100,7 +100,9 @@ class GISTUM(hmc.HMCBase):
 
             # account for sub-uturns
             if not(1 <= F and F <= B):
+                self.update_acceptance_rate(False)
                 return self.theta
+
 
             # H_star - H_0 + (H_0 - BW) - (H_star - FW)
             log_alpha = FW - BW
